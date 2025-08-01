@@ -1,0 +1,14 @@
+# Node modules
+/node_modules
+/client/node_modules
+/server/node_modules
+
+# Build outputs
+dist
+/shared-dist
+
+# Environment files
+.env
+
+# IDE files
+.vscode/
