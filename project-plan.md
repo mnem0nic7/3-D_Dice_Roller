@@ -19,16 +19,22 @@ A cross-platform 3D dice roller with realistic physics, customizable dice, and r
 - Shared: TypeScript types for roll messages, utility functions
 
 ## Milestones
-1. Initial scaffolding
-   - Create folder structure
-   - Basic TS configuration (tsconfig.json)
-   - Install core dependencies
-2. Front-end setup
-   - Render a single static d6 in the browser
-   - Verify scene setup with Three.js
-3. Back-end setup
-   - Start Express server with WebSocket endpoint
-   - Verify Socket.IO connection from client
+1. ✅ Initial scaffolding - COMPLETED
+   - ✅ Create folder structure
+   - ✅ Basic TS configuration (tsconfig.json)
+   - ✅ Install core dependencies
+   - ✅ Basic Three.js scene with rotating cube
+   - ✅ Express server with Socket.IO setup
+2. ✅ Front-end setup - COMPLETED  
+   - ✅ Render a single static d6 in the browser (rotating cube)
+   - ✅ Add physics simulation with cannon-es
+   - ✅ Implement dice roll animation and face detection
+   - ✅ Click-to-roll interaction with physics-based rolling
+   - ✅ Basic dice face detection based on final orientation
+3. Back-end setup - IN PROGRESS  
+   - ✅ Start Express server with WebSocket endpoint
+   - 🔄 Verify Socket.IO connection from client
+   - 🔄 Test roll message broadcasting
 4. Dice physics
    - Integrate cannon-es, create rolling logic for a die
    - Implement face-detection on physics sleep
