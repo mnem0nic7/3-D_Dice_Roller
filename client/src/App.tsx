@@ -23,6 +23,7 @@ const App: React.FC = () => {
   const [selectedTower, setSelectedTower] = useState<'none' | 'basic' | 'spiral' | 'funnel'>('none');
   const [currentMode, setCurrentMode] = useState<'dice' | 'tower'>('dice');
   const [isDragging, setIsDragging] = useState<'base' | 'tower' | null>(null);
+  const [selectedObject, setSelectedObject] = useState<'base' | 'tower' | null>(null);
   const [basePosition, setBasePosition] = useState({ x: 0, z: 0 });
   const [towerPosition, setTowerPosition] = useState({ x: 0, z: 0 });
 
@@ -226,107 +227,108 @@ const App: React.FC = () => {
     world.broadphase = new CANNON.NaiveBroadphase();
     worldRef.current = world;
 
-    // Enhanced Ground plane with texture-like appearance
-    const groundGeometry = new THREE.PlaneGeometry(30, 30);
-    const groundMaterial = new THREE.MeshLambertMaterial({ 
-      color: 0x2d5016,
-      transparent: true,
-      opacity: 0.8
-    });
-    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
-    ground.rotation.x = -Math.PI / 2;
-    ground.receiveShadow = true;
-    ground.position.y = -0.1; // Slightly below tower base
-    scene.add(ground);
-
-    // Add some ground details
-    const grassPatches = [];
-    for (let i = 0; i < 20; i++) {
-      const patchGeometry = new THREE.PlaneGeometry(2, 2);
-      const patchMaterial = new THREE.MeshLambertMaterial({ 
-        color: new THREE.Color().setHSL(0.25, 0.6, 0.2 + Math.random() * 0.2),
-        transparent: true,
-        opacity: 0.6
-      });
-      const patch = new THREE.Mesh(patchGeometry, patchMaterial);
-      patch.rotation.x = -Math.PI / 2;
-      patch.position.set(
-        (Math.random() - 0.5) * 25,
-        -0.05,
-        (Math.random() - 0.5) * 25
-      );
-      patch.receiveShadow = true;
-      scene.add(patch);
-      grassPatches.push(patch);
-    }
-
-    // Physics ground
-    const groundShape = new CANNON.Plane();
-    const groundBody = new CANNON.Body({ mass: 0, material: new CANNON.Material({ friction: 0.3, restitution: 0.3 }) });
-    groundBody.addShape(groundShape);
-    groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(-1, 0, 0), Math.PI / 2);
-    world.addBody(groundBody);
-
     // Base System will be initialized by the selectedBase useEffect
     console.log('Scene setup complete - waiting for base initialization');
 
-    // Add some mystical orbs floating around the scene
-    const orbs: THREE.Mesh[] = [];
-    for (let i = 0; i < 6; i++) {
-      const orbGeometry = new THREE.SphereGeometry(0.15, 16, 16);
-      const orbMaterial = new THREE.MeshPhongMaterial({ 
-        color: new THREE.Color().setHSL(0.6 + i * 0.1, 0.8, 0.6),
-        transparent: true,
-        opacity: 0.7,
-        emissive: new THREE.Color().setHSL(0.6 + i * 0.1, 0.5, 0.2)
-      });
-      const orb = new THREE.Mesh(orbGeometry, orbMaterial);
-      const angle = (i / 6) * Math.PI * 2;
-      const radius = 8;
-      orb.position.set(
-        Math.cos(angle) * radius,
-        3 + Math.sin(i * 2) * 2,
-        Math.sin(angle) * radius
-      );
-      scene.add(orb);
-      orbs.push(orb); // Store reference for animation
-    }
-
-    // Mouse click handler with camera interaction detection and dragging
+    // Mouse click handler with camera interaction detection and object selection
     let mouseDownTime = 0;
     let mouseDownPosition = { x: 0, y: 0 };
     let lastMousePosition = { x: 0, y: 0 };
+    let isMouseDown = false;
+    let currentlyDragging: 'base' | 'tower' | null = null;
+    
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    
+    const getIntersectedObject = (clientX: number, clientY: number) => {
+      mouse.x = (clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(clientY / window.innerHeight) * 2 + 1;
+      
+      raycaster.setFromCamera(mouse, camera);
+      
+      const objectsToTest: THREE.Mesh[] = [];
+      
+      // Add base meshes
+      if (currentBaseRef.current) {
+        currentBaseRef.current.elements.forEach((element: any) => {
+          if (element.mesh) {
+            element.mesh.userData = { type: 'base' };
+            objectsToTest.push(element.mesh);
+          }
+        });
+      }
+      
+      // Add tower meshes
+      if (currentTowerRef.current) {
+        currentTowerRef.current.elements.forEach((element: any) => {
+          if (element.mesh) {
+            element.mesh.userData = { type: 'tower' };
+            objectsToTest.push(element.mesh);
+          }
+        });
+      }
+      
+      const intersects = raycaster.intersectObjects(objectsToTest);
+      return intersects.length > 0 ? intersects[0].object.userData.type : null;
+    };
     
     const handleMouseDown = (event: MouseEvent) => {
       mouseDownTime = Date.now();
       mouseDownPosition = { x: event.clientX, y: event.clientY };
       lastMousePosition = { x: event.clientX, y: event.clientY };
+      isMouseDown = true;
+      
+      if (currentMode === 'tower') {
+        const intersectedObject = getIntersectedObject(event.clientX, event.clientY);
+        if (intersectedObject) {
+          setSelectedObject(intersectedObject);
+          currentlyDragging = intersectedObject;
+          setIsDragging(intersectedObject);
+          // Prevent camera controls when selecting an object
+          controls.enabled = false;
+          console.log(`Started dragging: ${intersectedObject}`);
+        }
+      }
     };
     
     const handleMouseMove = (event: MouseEvent) => {
-      if (currentMode !== 'tower') return;
+      if (!isMouseDown) return;
       
       const deltaX = event.clientX - lastMousePosition.x;
       const deltaY = event.clientY - lastMousePosition.y;
       const movement = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
       
-      if (movement > 2) { // Only process significant movement
-        const dragSensitivity = 0.02;
+      if (currentMode === 'tower' && currentlyDragging && movement > 2) {
+        // Convert screen space to world space for more intuitive dragging
+        const dragSensitivity = 0.01;
         
-        if (event.shiftKey) {
-          // Drag base
+        // Get camera direction vectors for proper world space movement
+        const cameraDirection = new THREE.Vector3();
+        camera.getWorldDirection(cameraDirection);
+        
+        // Calculate right and forward vectors relative to camera
+        const rightVector = new THREE.Vector3();
+        rightVector.crossVectors(camera.up, cameraDirection).normalize();
+        
+        const forwardVector = new THREE.Vector3();
+        forwardVector.crossVectors(rightVector, camera.up).normalize();
+        
+        // Calculate world space movement - Fixed direction mapping
+        const worldDeltaX = -rightVector.x * deltaX * dragSensitivity - forwardVector.x * deltaY * dragSensitivity;
+        const worldDeltaZ = -rightVector.z * deltaX * dragSensitivity - forwardVector.z * deltaY * dragSensitivity;
+        
+        console.log(`Dragging ${currentlyDragging} with world delta: ${worldDeltaX.toFixed(3)}, ${worldDeltaZ.toFixed(3)}`);
+        
+        if (currentlyDragging === 'base') {
           setBasePosition(prev => ({
-            x: prev.x + deltaX * dragSensitivity,
-            z: prev.z + deltaY * dragSensitivity
+            x: prev.x + worldDeltaX,
+            z: prev.z + worldDeltaZ
           }));
-          setIsDragging('base');
-        } else if (event.ctrlKey) {
-          // Drag tower
+        } else if (currentlyDragging === 'tower') {
           setTowerPosition(prev => ({
-            x: prev.x + deltaX * dragSensitivity,
-            z: prev.z + deltaY * dragSensitivity
+            x: prev.x + worldDeltaX,
+            z: prev.z + worldDeltaZ
           }));
-          setIsDragging('tower');
         }
       }
       
@@ -334,29 +336,39 @@ const App: React.FC = () => {
     };
     
     const handleMouseUp = () => {
+      isMouseDown = false;
+      currentlyDragging = null;
       setIsDragging(null);
+      // Re-enable camera controls
+      controls.enabled = true;
+      console.log('Stopped dragging');
     };
     
     const handleClick = (event: MouseEvent) => {
-      // Only allow dice rolling in dice mode
-      if (currentMode !== 'dice') {
-        console.log('Click ignored - not in dice mode');
-        return;
-      }
-      
       const clickDuration = Date.now() - mouseDownTime;
       const mouseMovement = Math.sqrt(
         Math.pow(event.clientX - mouseDownPosition.x, 2) + 
         Math.pow(event.clientY - mouseDownPosition.y, 2)
       );
       
-      // Only roll dice if it's a short click with minimal mouse movement
-      // This prevents rolling when user is rotating the camera
+      // Only process click if it's a short click with minimal movement
       if (clickDuration < 200 && mouseMovement < 5) {
-        console.log('Mouse click detected - rolling dice');
-        rollDice();
-      } else {
-        console.log('Mouse click ignored - camera interaction detected');
+        if (currentMode === 'dice') {
+          // Roll dice in dice mode
+          console.log('Mouse click detected - rolling dice');
+          rollDice();
+        } else if (currentMode === 'tower') {
+          // Handle object selection in tower mode
+          const intersectedObject = getIntersectedObject(event.clientX, event.clientY);
+          if (intersectedObject) {
+            setSelectedObject(intersectedObject);
+            console.log(`Selected object: ${intersectedObject}`);
+          } else {
+            // Click on empty space to deselect
+            setSelectedObject(null);
+            console.log('Deselected object');
+          }
+        }
       }
     };
 
@@ -374,14 +386,6 @@ const App: React.FC = () => {
       if (frameCount % 60 === 0) { // Log every 60 frames (about once per second)
         console.log(`Animation frame ${frameCount}, active dice: ${activeDiceRef.current.length}`);
       }
-      
-      // No flag animation (flag removed)
-      
-      // Animate only the floating orbs (not tower elements)
-      orbs.forEach((orb, index) => {
-        orb.position.y += Math.sin(frameCount * 0.02 + index) * 0.005;
-        orb.rotation.y += 0.01;
-      });
       
       // Step physics
       world.step(1/60);
@@ -473,7 +477,7 @@ const App: React.FC = () => {
       }
       renderer.dispose();
     };
-  }, [rollDice, hasAutoRolled, selectedBase, currentMode]);
+  }, [hasAutoRolled]);
 
   // Handle base changes
   useEffect(() => {
@@ -490,7 +494,7 @@ const App: React.FC = () => {
     // Create new base
     const createBase = (type: 'simple' | 'elevated' | 'arena') => {
       const baseMaterial = new THREE.MeshPhongMaterial({ 
-        color: 0x8B4513,
+        color: selectedObject === 'base' ? 0x4ecdc4 : 0x8B4513,
         shininess: 30,
         specular: 0x444444
       });
@@ -500,26 +504,26 @@ const App: React.FC = () => {
       
       switch (type) {
         case 'simple':
-          // Simple flat platform base with low walls
-          const simpleGeometry = new THREE.BoxGeometry(8, 0.5, 8);
+          // Simple flat platform base with low walls - 4x larger
+          const simpleGeometry = new THREE.BoxGeometry(32, 2, 32);
           const simpleMesh = new THREE.Mesh(simpleGeometry, baseMaterial);
-          simpleMesh.position.set(basePosition.x, 0.25, basePosition.z);
+          simpleMesh.position.set(basePosition.x, 1, basePosition.z);
           simpleMesh.receiveShadow = true;
           simpleMesh.castShadow = true;
           sceneRef.current!.add(simpleMesh);
           
-          const simpleShape = new CANNON.Box(new CANNON.Vec3(4, 0.25, 4));
+          const simpleShape = new CANNON.Box(new CANNON.Vec3(16, 1, 16));
           const simpleBody = new CANNON.Body({ mass: 0, material: basePhysicsMaterial });
           simpleBody.addShape(simpleShape);
-          simpleBody.position.set(basePosition.x, 0.25, basePosition.z);
+          simpleBody.position.set(basePosition.x, 1, basePosition.z);
           worldRef.current!.addBody(simpleBody);
           
           baseElements.push({ mesh: simpleMesh, body: simpleBody });
           
-          // Add high perimeter walls for better dice containment
-          const simpleWallHeight = 2.0;
-          const simpleWallThickness = 0.3;
-          const simpleSize = 8;
+          // Add high perimeter walls for better dice containment - 4x larger
+          const simpleWallHeight = 8.0;
+          const simpleWallThickness = 1.2;
+          const simpleSize = 32;
           
           const simpleWallPositions = [
             { x: basePosition.x, z: basePosition.z + simpleSize/2 + simpleWallThickness/2, width: simpleSize + simpleWallThickness, depth: simpleWallThickness },
@@ -531,7 +535,7 @@ const App: React.FC = () => {
           simpleWallPositions.forEach(wall => {
             const wallGeometry = new THREE.BoxGeometry(wall.width, simpleWallHeight, wall.depth);
             const wallMesh = new THREE.Mesh(wallGeometry, baseMaterial);
-            wallMesh.position.set(wall.x, 0.5 + simpleWallHeight/2, wall.z);
+            wallMesh.position.set(wall.x, 2 + simpleWallHeight/2, wall.z);
             wallMesh.receiveShadow = true;
             wallMesh.castShadow = true;
             sceneRef.current!.add(wallMesh);
@@ -539,7 +543,7 @@ const App: React.FC = () => {
             const wallShape = new CANNON.Box(new CANNON.Vec3(wall.width/2, simpleWallHeight/2, wall.depth/2));
             const wallBody = new CANNON.Body({ mass: 0, material: basePhysicsMaterial });
             wallBody.addShape(wallShape);
-            wallBody.position.set(wall.x, 0.5 + simpleWallHeight/2, wall.z);
+            wallBody.position.set(wall.x, 2 + simpleWallHeight/2, wall.z);
             worldRef.current!.addBody(wallBody);
             
             baseElements.push({ mesh: wallMesh, body: wallBody });
@@ -547,26 +551,26 @@ const App: React.FC = () => {
           break;
           
         case 'elevated':
-          // Elevated platform with steps and decorative walls
-          const mainPlatformGeometry = new THREE.BoxGeometry(8, 1, 8);
+          // Elevated platform with steps and decorative walls - 4x larger
+          const mainPlatformGeometry = new THREE.BoxGeometry(32, 4, 32);
           const mainPlatform = new THREE.Mesh(mainPlatformGeometry, baseMaterial);
-          mainPlatform.position.set(basePosition.x, 0.5, basePosition.z);
+          mainPlatform.position.set(basePosition.x, 2, basePosition.z);
           mainPlatform.receiveShadow = true;
           mainPlatform.castShadow = true;
           sceneRef.current!.add(mainPlatform);
           
-          const mainPlatformShape = new CANNON.Box(new CANNON.Vec3(4, 0.5, 4));
+          const mainPlatformShape = new CANNON.Box(new CANNON.Vec3(16, 2, 16));
           const mainPlatformBody = new CANNON.Body({ mass: 0, material: basePhysicsMaterial });
           mainPlatformBody.addShape(mainPlatformShape);
-          mainPlatformBody.position.set(basePosition.x, 0.5, basePosition.z);
+          mainPlatformBody.position.set(basePosition.x, 2, basePosition.z);
           worldRef.current!.addBody(mainPlatformBody);
           
           baseElements.push({ mesh: mainPlatform, body: mainPlatformBody });
           
-          // Add elevated perimeter walls
-          const elevatedWallHeight = 2.2;
-          const elevatedWallThickness = 0.3;
-          const elevatedSize = 8;
+          // Add elevated perimeter walls - 4x larger
+          const elevatedWallHeight = 8.8;
+          const elevatedWallThickness = 1.2;
+          const elevatedSize = 32;
           
           const elevatedWallPositions = [
             { x: basePosition.x, z: basePosition.z + elevatedSize/2 + elevatedWallThickness/2, width: elevatedSize + elevatedWallThickness, depth: elevatedWallThickness },
@@ -578,7 +582,7 @@ const App: React.FC = () => {
           elevatedWallPositions.forEach(wall => {
             const wallGeometry = new THREE.BoxGeometry(wall.width, elevatedWallHeight, wall.depth);
             const wallMesh = new THREE.Mesh(wallGeometry, baseMaterial);
-            wallMesh.position.set(wall.x, 1 + elevatedWallHeight/2, wall.z);
+            wallMesh.position.set(wall.x, 4 + elevatedWallHeight/2, wall.z);
             wallMesh.receiveShadow = true;
             wallMesh.castShadow = true;
             sceneRef.current!.add(wallMesh);
@@ -586,25 +590,25 @@ const App: React.FC = () => {
             const wallShape = new CANNON.Box(new CANNON.Vec3(wall.width/2, elevatedWallHeight/2, wall.depth/2));
             const wallBody = new CANNON.Body({ mass: 0, material: basePhysicsMaterial });
             wallBody.addShape(wallShape);
-            wallBody.position.set(wall.x, 1 + elevatedWallHeight/2, wall.z);
+            wallBody.position.set(wall.x, 4 + elevatedWallHeight/2, wall.z);
             worldRef.current!.addBody(wallBody);
             
             baseElements.push({ mesh: wallMesh, body: wallBody });
           });
           
-          // Add steps around the platform
+          // Add steps around the platform - 4x larger
           for (let i = 0; i < 4; i++) {
-            const stepGeometry = new THREE.BoxGeometry(10, 0.3, 10);
+            const stepGeometry = new THREE.BoxGeometry(40, 1.2, 40);
             const stepMesh = new THREE.Mesh(stepGeometry, baseMaterial);
-            stepMesh.position.set(basePosition.x, 0.15 - (i * 0.2), basePosition.z);
+            stepMesh.position.set(basePosition.x, 0.6 - (i * 0.8), basePosition.z);
             stepMesh.receiveShadow = true;
             stepMesh.castShadow = true;
             sceneRef.current!.add(stepMesh);
             
-            const stepShape = new CANNON.Box(new CANNON.Vec3(5, 0.15, 5));
+            const stepShape = new CANNON.Box(new CANNON.Vec3(20, 0.6, 20));
             const stepBody = new CANNON.Body({ mass: 0, material: basePhysicsMaterial });
             stepBody.addShape(stepShape);
-            stepBody.position.set(basePosition.x, 0.15 - (i * 0.2), basePosition.z);
+            stepBody.position.set(basePosition.x, 0.6 - (i * 0.8), basePosition.z);
             worldRef.current!.addBody(stepBody);
             
             baseElements.push({ mesh: stepMesh, body: stepBody });
@@ -612,26 +616,26 @@ const App: React.FC = () => {
           break;
           
         case 'arena':
-          // Arena-style base with raised walls
-          const arenaFloorGeometry = new THREE.BoxGeometry(12, 0.5, 12);
+          // Arena-style base with raised walls - 4x larger
+          const arenaFloorGeometry = new THREE.BoxGeometry(48, 2, 48);
           const arenaFloor = new THREE.Mesh(arenaFloorGeometry, baseMaterial);
-          arenaFloor.position.set(basePosition.x, 0.25, basePosition.z);
+          arenaFloor.position.set(basePosition.x, 1, basePosition.z);
           arenaFloor.receiveShadow = true;
           arenaFloor.castShadow = true;
           sceneRef.current!.add(arenaFloor);
           
-          const arenaFloorShape = new CANNON.Box(new CANNON.Vec3(6, 0.25, 6));
+          const arenaFloorShape = new CANNON.Box(new CANNON.Vec3(24, 1, 24));
           const arenaFloorBody = new CANNON.Body({ mass: 0, material: basePhysicsMaterial });
           arenaFloorBody.addShape(arenaFloorShape);
-          arenaFloorBody.position.set(basePosition.x, 0.25, basePosition.z);
+          arenaFloorBody.position.set(basePosition.x, 1, basePosition.z);
           worldRef.current!.addBody(arenaFloorBody);
           
           baseElements.push({ mesh: arenaFloor, body: arenaFloorBody });
           
-          // Add high perimeter walls
-          const wallHeight = 3.0;
-          const wallThickness = 0.4;
-          const arenaSize = 12;
+          // Add high perimeter walls - 4x larger
+          const wallHeight = 12.0;
+          const wallThickness = 1.6;
+          const arenaSize = 48;
           
           const wallPositions = [
             { x: basePosition.x, z: basePosition.z + arenaSize/2 + wallThickness/2, width: arenaSize + wallThickness, depth: wallThickness },
@@ -643,7 +647,7 @@ const App: React.FC = () => {
           wallPositions.forEach(wall => {
             const wallGeometry = new THREE.BoxGeometry(wall.width, wallHeight, wall.depth);
             const wallMesh = new THREE.Mesh(wallGeometry, baseMaterial);
-            wallMesh.position.set(wall.x, 0.5 + wallHeight/2, wall.z);
+            wallMesh.position.set(wall.x, 2 + wallHeight/2, wall.z);
             wallMesh.receiveShadow = true;
             wallMesh.castShadow = true;
             sceneRef.current!.add(wallMesh);
@@ -651,7 +655,7 @@ const App: React.FC = () => {
             const wallShape = new CANNON.Box(new CANNON.Vec3(wall.width/2, wallHeight/2, wall.depth/2));
             const wallBody = new CANNON.Body({ mass: 0, material: basePhysicsMaterial });
             wallBody.addShape(wallShape);
-            wallBody.position.set(wall.x, 0.5 + wallHeight/2, wall.z);
+            wallBody.position.set(wall.x, 2 + wallHeight/2, wall.z);
             worldRef.current!.addBody(wallBody);
             
             baseElements.push({ mesh: wallMesh, body: wallBody });
@@ -664,19 +668,19 @@ const App: React.FC = () => {
         elements: baseElements,
         getTowerPosition: () => ({ 
           x: basePosition.x, 
-          y: type === 'elevated' ? 2.2 : (type === 'arena' ? 0.5 : 1.3), 
+          y: type === 'elevated' ? 8.8 : (type === 'arena' ? 2 : 5.2), 
           z: basePosition.z 
         }),
         getCollectionArea: () => ({
           center: { x: basePosition.x, y: 0, z: basePosition.z },
-          radius: type === 'arena' ? 4 : 3
+          radius: type === 'arena' ? 16 : 12
         }),
         getWallHeight: () => {
           switch(type) {
-            case 'simple': return 2.0;
-            case 'elevated': return 2.2;
-            case 'arena': return 3.0;
-            default: return 2.0;
+            case 'simple': return 8.0;
+            case 'elevated': return 8.8;
+            case 'arena': return 12.0;
+            default: return 8.0;
           }
         }
       };
@@ -685,13 +689,15 @@ const App: React.FC = () => {
     const newBase = createBase(selectedBase);
     currentBaseRef.current = newBase;
     console.log(`Base changed to: ${selectedBase} at position (${basePosition.x}, ${basePosition.z})`);
-  }, [selectedBase, basePosition]);
+  }, [selectedBase, basePosition, selectedObject]);
 
   // Tower creation system
   const currentTowerRef = useRef<any>(null);
   
   useEffect(() => {
-    if (!sceneRef.current || !worldRef.current || selectedTower === 'none') {
+    if (!sceneRef.current || !worldRef.current) return;
+    
+    if (selectedTower === 'none') {
       // Remove existing tower if any
       if (currentTowerRef.current) {
         currentTowerRef.current.elements.forEach((element: any) => {
@@ -714,7 +720,7 @@ const App: React.FC = () => {
     // Create tower
     const createTower = (type: 'basic' | 'spiral' | 'funnel') => {
       const towerMaterial = new THREE.MeshPhongMaterial({ 
-        color: 0x696969,
+        color: selectedObject === 'tower' ? 0xff6b6b : 0x696969,
         shininess: 30,
         specular: 0x444444
       });
@@ -724,81 +730,250 @@ const App: React.FC = () => {
       
       switch (type) {
         case 'basic':
-          // Simple tower with ramps
-          const baseGeometry = new THREE.BoxGeometry(2, 0.3, 4);
+          // Simple tower with ramps and enclosing walls with bottom opening - 4x larger
+          const baseGeometry = new THREE.BoxGeometry(8, 1.2, 16);
           const baseMesh = new THREE.Mesh(baseGeometry, towerMaterial);
           baseMesh.position.set(towerPosition.x, 3, towerPosition.z);
           baseMesh.receiveShadow = true;
           baseMesh.castShadow = true;
           sceneRef.current!.add(baseMesh);
           
-          const baseShape = new CANNON.Box(new CANNON.Vec3(1, 0.15, 2));
+          const baseShape = new CANNON.Box(new CANNON.Vec3(4, 0.6, 8));
           const baseBody = new CANNON.Body({ mass: 0, material: towerPhysicsMaterial });
           baseBody.addShape(baseShape);
           baseBody.position.set(towerPosition.x, 3, towerPosition.z);
           worldRef.current!.addBody(baseBody);
           
           towerElements.push({ mesh: baseMesh, body: baseBody });
+          
+          // Add enclosing walls with bottom opening
+          const basicWallHeight = 10;
+          const basicWallThickness = 0.5;
+          const openingWidth = 4; // Width of the opening at the bottom
+          
+          // Front wall with opening
+          const frontWallGeometry = new THREE.BoxGeometry(8, basicWallHeight - 3, basicWallThickness);
+          const frontWallMesh = new THREE.Mesh(frontWallGeometry, towerMaterial);
+          frontWallMesh.position.set(towerPosition.x, 3 + (basicWallHeight - 3) / 2, towerPosition.z + 8);
+          frontWallMesh.receiveShadow = true;
+          frontWallMesh.castShadow = true;
+          sceneRef.current!.add(frontWallMesh);
+          
+          const frontWallShape = new CANNON.Box(new CANNON.Vec3(4, (basicWallHeight - 3) / 2, basicWallThickness / 2));
+          const frontWallBody = new CANNON.Body({ mass: 0, material: towerPhysicsMaterial });
+          frontWallBody.addShape(frontWallShape);
+          frontWallBody.position.set(towerPosition.x, 3 + (basicWallHeight - 3) / 2, towerPosition.z + 8);
+          worldRef.current!.addBody(frontWallBody);
+          
+          towerElements.push({ mesh: frontWallMesh, body: frontWallBody });
+          
+          // Back wall (full height)
+          const backWallGeometry = new THREE.BoxGeometry(8, basicWallHeight, basicWallThickness);
+          const backWallMesh = new THREE.Mesh(backWallGeometry, towerMaterial);
+          backWallMesh.position.set(towerPosition.x, 3 + basicWallHeight / 2, towerPosition.z - 8);
+          backWallMesh.receiveShadow = true;
+          backWallMesh.castShadow = true;
+          sceneRef.current!.add(backWallMesh);
+          
+          const backWallShape = new CANNON.Box(new CANNON.Vec3(4, basicWallHeight / 2, basicWallThickness / 2));
+          const backWallBody = new CANNON.Body({ mass: 0, material: towerPhysicsMaterial });
+          backWallBody.addShape(backWallShape);
+          backWallBody.position.set(towerPosition.x, 3 + basicWallHeight / 2, towerPosition.z - 8);
+          worldRef.current!.addBody(backWallBody);
+          
+          towerElements.push({ mesh: backWallMesh, body: backWallBody });
+          
+          // Left wall (full height)
+          const leftWallGeometry = new THREE.BoxGeometry(basicWallThickness, basicWallHeight, 16);
+          const leftWallMesh = new THREE.Mesh(leftWallGeometry, towerMaterial);
+          leftWallMesh.position.set(towerPosition.x - 4, 3 + basicWallHeight / 2, towerPosition.z);
+          leftWallMesh.receiveShadow = true;
+          leftWallMesh.castShadow = true;
+          sceneRef.current!.add(leftWallMesh);
+          
+          const leftWallShape = new CANNON.Box(new CANNON.Vec3(basicWallThickness / 2, basicWallHeight / 2, 8));
+          const leftWallBody = new CANNON.Body({ mass: 0, material: towerPhysicsMaterial });
+          leftWallBody.addShape(leftWallShape);
+          leftWallBody.position.set(towerPosition.x - 4, 3 + basicWallHeight / 2, towerPosition.z);
+          worldRef.current!.addBody(leftWallBody);
+          
+          towerElements.push({ mesh: leftWallMesh, body: leftWallBody });
+          
+          // Right wall (full height)
+          const rightWallGeometry = new THREE.BoxGeometry(basicWallThickness, basicWallHeight, 16);
+          const rightWallMesh = new THREE.Mesh(rightWallGeometry, towerMaterial);
+          rightWallMesh.position.set(towerPosition.x + 4, 3 + basicWallHeight / 2, towerPosition.z);
+          rightWallMesh.receiveShadow = true;
+          rightWallMesh.castShadow = true;
+          sceneRef.current!.add(rightWallMesh);
+          
+          const rightWallShape = new CANNON.Box(new CANNON.Vec3(basicWallThickness / 2, basicWallHeight / 2, 8));
+          const rightWallBody = new CANNON.Body({ mass: 0, material: towerPhysicsMaterial });
+          rightWallBody.addShape(rightWallShape);
+          rightWallBody.position.set(towerPosition.x + 4, 3 + basicWallHeight / 2, towerPosition.z);
+          worldRef.current!.addBody(rightWallBody);
+          
+          towerElements.push({ mesh: rightWallMesh, body: rightWallBody });
           break;
           
         case 'spiral':
-          // Spiral tower with multiple levels
+          // Spiral tower with multiple levels and enclosing walls - 4x larger
           for (let i = 0; i < 3; i++) {
-            const levelGeometry = new THREE.BoxGeometry(1.5, 0.2, 3);
+            const levelGeometry = new THREE.BoxGeometry(6, 0.8, 12);
             const levelMesh = new THREE.Mesh(levelGeometry, towerMaterial);
-            levelMesh.position.set(towerPosition.x + Math.sin(i * Math.PI/2) * 0.5, 3 + i * 0.8, towerPosition.z + Math.cos(i * Math.PI/2) * 0.5);
+            levelMesh.position.set(towerPosition.x + Math.sin(i * Math.PI/2) * 2, 3 + i * 3.2, towerPosition.z + Math.cos(i * Math.PI/2) * 2);
             levelMesh.rotation.y = i * Math.PI/2;
             levelMesh.receiveShadow = true;
             levelMesh.castShadow = true;
             sceneRef.current!.add(levelMesh);
             
-            const levelShape = new CANNON.Box(new CANNON.Vec3(0.75, 0.1, 1.5));
+            const levelShape = new CANNON.Box(new CANNON.Vec3(3, 0.4, 6));
             const levelBody = new CANNON.Body({ mass: 0, material: towerPhysicsMaterial });
             levelBody.addShape(levelShape);
-            levelBody.position.set(towerPosition.x + Math.sin(i * Math.PI/2) * 0.5, 3 + i * 0.8, towerPosition.z + Math.cos(i * Math.PI/2) * 0.5);
+            levelBody.position.set(towerPosition.x + Math.sin(i * Math.PI/2) * 2, 3 + i * 3.2, towerPosition.z + Math.cos(i * Math.PI/2) * 2);
             levelBody.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), i * Math.PI/2);
             worldRef.current!.addBody(levelBody);
             
             towerElements.push({ mesh: levelMesh, body: levelBody });
           }
+          
+          // Add cylindrical enclosing walls with bottom opening
+          const cylinderWalls = 12;
+          const wallRadius = 8;
+          const spiralWallHeight = 12;
+          const spiralWallThickness = 0.5;
+          
+          for (let i = 0; i < cylinderWalls; i++) {
+            const angle = (i / cylinderWalls) * Math.PI * 2;
+            
+            // Skip walls at the front to create an opening (skip 2 walls in front)
+            if (i >= cylinderWalls * 0.4 && i <= cylinderWalls * 0.6) {
+              // Create shorter walls for the opening (only upper portion)
+              const upperWallGeometry = new THREE.BoxGeometry(spiralWallThickness, spiralWallHeight - 4, 2);
+              const upperWallMesh = new THREE.Mesh(upperWallGeometry, towerMaterial);
+              upperWallMesh.position.set(
+                towerPosition.x + Math.cos(angle) * wallRadius,
+                3 + spiralWallHeight - 2,
+                towerPosition.z + Math.sin(angle) * wallRadius
+              );
+              upperWallMesh.rotation.y = angle;
+              upperWallMesh.receiveShadow = true;
+              upperWallMesh.castShadow = true;
+              sceneRef.current!.add(upperWallMesh);
+              
+              const upperWallShape = new CANNON.Box(new CANNON.Vec3(spiralWallThickness / 2, (spiralWallHeight - 4) / 2, 1));
+              const upperWallBody = new CANNON.Body({ mass: 0, material: towerPhysicsMaterial });
+              upperWallBody.addShape(upperWallShape);
+              upperWallBody.position.set(
+                towerPosition.x + Math.cos(angle) * wallRadius,
+                3 + spiralWallHeight - 2,
+                towerPosition.z + Math.sin(angle) * wallRadius
+              );
+              upperWallBody.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), angle);
+              worldRef.current!.addBody(upperWallBody);
+              
+              towerElements.push({ mesh: upperWallMesh, body: upperWallBody });
+            } else {
+              // Full height walls
+              const wallGeometry = new THREE.BoxGeometry(spiralWallThickness, spiralWallHeight, 2);
+              const wallMesh = new THREE.Mesh(wallGeometry, towerMaterial);
+              wallMesh.position.set(
+                towerPosition.x + Math.cos(angle) * wallRadius,
+                3 + spiralWallHeight / 2,
+                towerPosition.z + Math.sin(angle) * wallRadius
+              );
+              wallMesh.rotation.y = angle;
+              wallMesh.receiveShadow = true;
+              wallMesh.castShadow = true;
+              sceneRef.current!.add(wallMesh);
+              
+              const wallShape = new CANNON.Box(new CANNON.Vec3(spiralWallThickness / 2, spiralWallHeight / 2, 1));
+              const wallBody = new CANNON.Body({ mass: 0, material: towerPhysicsMaterial });
+              wallBody.addShape(wallShape);
+              wallBody.position.set(
+                towerPosition.x + Math.cos(angle) * wallRadius,
+                3 + spiralWallHeight / 2,
+                towerPosition.z + Math.sin(angle) * wallRadius
+              );
+              wallBody.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), angle);
+              worldRef.current!.addBody(wallBody);
+              
+              towerElements.push({ mesh: wallMesh, body: wallBody });
+            }
+          }
           break;
           
         case 'funnel':
-          // Funnel-shaped tower
-          const funnelGeometry = new THREE.ConeGeometry(2, 2, 8);
+          // Funnel-shaped tower with enclosing walls and bottom opening - 4x larger
+          const funnelGeometry = new THREE.ConeGeometry(8, 8, 8);
           const funnelMesh = new THREE.Mesh(funnelGeometry, towerMaterial);
           funnelMesh.position.set(towerPosition.x, 4, towerPosition.z);
           funnelMesh.receiveShadow = true;
           funnelMesh.castShadow = true;
           sceneRef.current!.add(funnelMesh);
           
-          // Create funnel walls as separate physics bodies
-          for (let i = 0; i < 8; i++) {
-            const angle = (i / 8) * Math.PI * 2;
-            const wallGeometry = new THREE.BoxGeometry(0.1, 2, 1);
-            const wallMesh = new THREE.Mesh(wallGeometry, towerMaterial);
-            wallMesh.position.set(
-              towerPosition.x + Math.cos(angle) * 1.5,
-              4,
-              towerPosition.z + Math.sin(angle) * 1.5
-            );
-            wallMesh.rotation.y = angle;
-            wallMesh.receiveShadow = true;
-            wallMesh.castShadow = true;
-            sceneRef.current!.add(wallMesh);
+          // Create funnel walls as separate physics bodies with opening - 4x larger
+          const funnelWalls = 8;
+          const funnelWallHeight = 8;
+          const funnelWallThickness = 0.4;
+          
+          for (let i = 0; i < funnelWalls; i++) {
+            const angle = (i / funnelWalls) * Math.PI * 2;
             
-            const wallShape = new CANNON.Box(new CANNON.Vec3(0.05, 1, 0.5));
-            const wallBody = new CANNON.Body({ mass: 0, material: towerPhysicsMaterial });
-            wallBody.addShape(wallShape);
-            wallBody.position.set(
-              towerPosition.x + Math.cos(angle) * 1.5,
-              4,
-              towerPosition.z + Math.sin(angle) * 1.5
-            );
-            wallBody.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), angle);
-            worldRef.current!.addBody(wallBody);
-            
-            towerElements.push({ mesh: wallMesh, body: wallBody });
+            // Skip walls at the front to create an opening (skip 2 walls in front)
+            if (i >= funnelWalls * 0.35 && i <= funnelWalls * 0.65) {
+              // Create shorter walls for the opening (only upper portion)
+              const upperWallGeometry = new THREE.BoxGeometry(funnelWallThickness, funnelWallHeight - 3, 4);
+              const upperWallMesh = new THREE.Mesh(upperWallGeometry, towerMaterial);
+              upperWallMesh.position.set(
+                towerPosition.x + Math.cos(angle) * 6,
+                4 + (funnelWallHeight - 3) / 2,
+                towerPosition.z + Math.sin(angle) * 6
+              );
+              upperWallMesh.rotation.y = angle;
+              upperWallMesh.receiveShadow = true;
+              upperWallMesh.castShadow = true;
+              sceneRef.current!.add(upperWallMesh);
+              
+              const upperWallShape = new CANNON.Box(new CANNON.Vec3(funnelWallThickness / 2, (funnelWallHeight - 3) / 2, 2));
+              const upperWallBody = new CANNON.Body({ mass: 0, material: towerPhysicsMaterial });
+              upperWallBody.addShape(upperWallShape);
+              upperWallBody.position.set(
+                towerPosition.x + Math.cos(angle) * 6,
+                4 + (funnelWallHeight - 3) / 2,
+                towerPosition.z + Math.sin(angle) * 6
+              );
+              upperWallBody.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), angle);
+              worldRef.current!.addBody(upperWallBody);
+              
+              towerElements.push({ mesh: upperWallMesh, body: upperWallBody });
+            } else {
+              // Full height walls
+              const wallGeometry = new THREE.BoxGeometry(funnelWallThickness, funnelWallHeight, 4);
+              const wallMesh = new THREE.Mesh(wallGeometry, towerMaterial);
+              wallMesh.position.set(
+                towerPosition.x + Math.cos(angle) * 6,
+                4,
+                towerPosition.z + Math.sin(angle) * 6
+              );
+              wallMesh.rotation.y = angle;
+              wallMesh.receiveShadow = true;
+              wallMesh.castShadow = true;
+              sceneRef.current!.add(wallMesh);
+              
+              const wallShape = new CANNON.Box(new CANNON.Vec3(funnelWallThickness / 2, funnelWallHeight / 2, 2));
+              const wallBody = new CANNON.Body({ mass: 0, material: towerPhysicsMaterial });
+              wallBody.addShape(wallShape);
+              wallBody.position.set(
+                towerPosition.x + Math.cos(angle) * 6,
+                4,
+                towerPosition.z + Math.sin(angle) * 6
+              );
+              wallBody.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), angle);
+              worldRef.current!.addBody(wallBody);
+              
+              towerElements.push({ mesh: wallMesh, body: wallBody });
+            }
           }
           
           towerElements.push({ mesh: funnelMesh, body: new CANNON.Body({ mass: 0 }) }); // Visual only
@@ -814,7 +989,7 @@ const App: React.FC = () => {
     const newTower = createTower(selectedTower);
     currentTowerRef.current = newTower;
     console.log(`Tower created: ${selectedTower} at position (${towerPosition.x}, ${towerPosition.z})`);
-  }, [selectedTower, towerPosition]);
+  }, [selectedTower, towerPosition, selectedObject]);
 
   const total = rollResults.reduce((sum, result) => sum + result.result, 0) + modifier;
 
@@ -860,21 +1035,6 @@ const App: React.FC = () => {
                 🏗️ Tower Builder
               </button>
             </div>
-          </div>
-
-          {/* Base Selector - Available in both modes */}
-          <div className="base-selector" style={{ marginBottom: '15px' }}>
-            <label htmlFor="base-select">Base Style:</label>
-            <select
-              id="base-select"
-              value={selectedBase}
-              onChange={(e) => setSelectedBase(e.target.value as 'simple' | 'elevated' | 'arena')}
-              className="base-select"
-            >
-              <option value="simple">Simple Platform</option>
-              <option value="elevated">Elevated Steps</option>
-              <option value="arena">Arena Walls</option>
-            </select>
           </div>
 
           {/* Dice Roller Mode */}
@@ -950,9 +1110,30 @@ const App: React.FC = () => {
               }}>
                 <h3 style={{ margin: '0 0 15px 0', color: '#ff6b6b' }}>🏗️ Tower Builder</h3>
                 <p style={{ margin: '0 0 15px 0', fontSize: '14px', color: '#ccc' }}>
-                  Select a tower shape and drag to position your base and tower.
+                  Select a base style and tower shape, then click objects to select and drag them.
                 </p>
                 
+                <div style={{ marginBottom: '15px' }}>
+                  <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px' }}>Base Style:</label>
+                  <select
+                    value={selectedBase}
+                    onChange={(e) => setSelectedBase(e.target.value as 'simple' | 'elevated' | 'arena')}
+                    style={{
+                      width: '100%',
+                      padding: '8px',
+                      backgroundColor: '#333',
+                      color: 'white',
+                      border: '1px solid #666',
+                      borderRadius: '5px',
+                      fontSize: '14px'
+                    }}
+                  >
+                    <option value="simple">Simple Platform</option>
+                    <option value="elevated">Elevated Steps</option>
+                    <option value="arena">Arena Walls</option>
+                  </select>
+                </div>
+
                 <div style={{ marginBottom: '15px' }}>
                   <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px' }}>Tower Shape:</label>
                   <select
@@ -982,12 +1163,13 @@ const App: React.FC = () => {
                   marginBottom: '15px'
                 }}>
                   <div style={{ fontSize: '14px', marginBottom: '8px', fontWeight: 'bold' }}>
-                    Drag Controls:
+                    Interaction Controls:
                   </div>
                   <div style={{ fontSize: '12px', color: '#ccc' }}>
-                    • Hold SHIFT + drag to move base<br/>
-                    • Hold CTRL + drag to move tower<br/>
-                    • Click normally to rotate camera
+                    • Click on base or tower to select it<br/>
+                    • Drag selected object to move it<br/>
+                    • Click empty space to deselect<br/>
+                    • Selected objects are highlighted
                   </div>
                 </div>
                 
@@ -1001,8 +1183,8 @@ const App: React.FC = () => {
                     Current Setup:
                   </div>
                   <div style={{ fontSize: '12px', color: '#ccc' }}>
-                    Base: {selectedBase} at ({basePosition.x.toFixed(1)}, {basePosition.z.toFixed(1)})<br/>
-                    Tower: {selectedTower} at ({towerPosition.x.toFixed(1)}, {towerPosition.z.toFixed(1)})
+                    Base: {selectedBase} at ({basePosition.x.toFixed(1)}, {basePosition.z.toFixed(1)}) {selectedObject === 'base' ? '✓ Selected' : ''}<br/>
+                    Tower: {selectedTower} at ({towerPosition.x.toFixed(1)}, {towerPosition.z.toFixed(1)}) {selectedObject === 'tower' ? '✓ Selected' : ''}
                   </div>
                 </div>
                 
@@ -1010,6 +1192,7 @@ const App: React.FC = () => {
                   onClick={() => {
                     setBasePosition({ x: 0, z: 0 });
                     setTowerPosition({ x: 0, z: 0 });
+                    setSelectedObject(null);
                   }}
                   style={{
                     width: '100%',
@@ -1024,7 +1207,7 @@ const App: React.FC = () => {
                     marginBottom: '10px'
                   }}
                 >
-                  Reset Positions
+                  Reset Positions & Selection
                 </button>
 
                 <button
@@ -1047,16 +1230,27 @@ const App: React.FC = () => {
             </div>
           )}
         </div>
-        
-        {/* Results - Only show in dice mode */}
-        {currentMode === 'dice' && rollResults.length > 0 && (
+      </div>
+      
+      {/* Results - Bottom right corner */}
+      {currentMode === 'dice' && rollResults.length > 0 && (
+        <div style={{
+          position: 'fixed',
+          bottom: '20px',
+          right: '20px',
+          zIndex: 1000,
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          borderRadius: '10px',
+          padding: '15px',
+          border: '2px solid #4ecdc4'
+        }}>
           <RollResults 
             results={rollResults}
             modifier={modifier}
             isRolling={isRolling}
           />
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };
