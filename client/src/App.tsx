@@ -1,11 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
+import { DiceType, DiceRoll } from '../../shared/src/types';
+import { DiceSelector } from './components/DiceSelector';
+import { RollResults } from './components/RollResults';
+import { DiceFactory, DiceGeometry } from './utils/DiceFactory';
 
 const App: React.FC = () => {
   const mountRef = useRef<HTMLDivElement>(null);
+  const [selectedDice, setSelectedDice] = useState<DiceType[]>(['d6']);
   const [isRolling, setIsRolling] = useState(false);
-  const [diceResult, setDiceResult] = useState<number | null>(null);
+  const [rollResults, setRollResults] = useState<DiceRoll[]>([]);
+  const [modifier, setModifier] = useState(0);
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -43,21 +49,6 @@ const App: React.FC = () => {
     groundMesh.receiveShadow = true;
     scene.add(groundMesh);
 
-    // Create dice (cube) physics body
-    const diceShape = new CANNON.Box(new CANNON.Vec3(0.5, 0.5, 0.5));
-    const diceBody = new CANNON.Body({ mass: 1 });
-    diceBody.addShape(diceShape);
-    diceBody.position.set(0, 5, 0);
-    diceBody.material = new CANNON.Material({ friction: 0.4, restitution: 0.3 });
-    world.addBody(diceBody);
-
-    // Visual dice (cube)
-    const diceGeometry = new THREE.BoxGeometry(1, 1, 1);
-    const diceMaterial = new THREE.MeshPhongMaterial({ color: 0xff6b6b });
-    const diceMesh = new THREE.Mesh(diceGeometry, diceMaterial);
-    diceMesh.castShadow = true;
-    scene.add(diceMesh);
-
     // Add lighting
     const ambientLight = new THREE.AmbientLight(0x404040, 0.4);
     scene.add(ambientLight);
@@ -69,78 +60,77 @@ const App: React.FC = () => {
     directionalLight.shadow.mapSize.height = 2048;
     scene.add(directionalLight);
 
-    camera.position.set(5, 5, 5);
+    camera.position.set(8, 8, 8);
     camera.lookAt(0, 0, 0);
+
+    // Store active dice
+    let activeDice: DiceGeometry[] = [];
 
     // Roll function
     const rollDice = () => {
+      if (selectedDice.length === 0) return;
+      
       setIsRolling(true);
-      setDiceResult(null);
+      setRollResults([]);
       
-      // Reset dice position and apply random force
-      diceBody.position.set(0, 5, 0);
-      diceBody.velocity.set(0, 0, 0);
-      diceBody.angularVelocity.set(0, 0, 0);
-      
-      // Apply random impulse
-      const force = new CANNON.Vec3(
-        (Math.random() - 0.5) * 10,
-        2,
-        (Math.random() - 0.5) * 10
-      );
-      diceBody.applyImpulse(force, diceBody.position);
-      
-      // Apply random torque
-      const torque = new CANNON.Vec3(
-        (Math.random() - 0.5) * 5,
-        (Math.random() - 0.5) * 5,
-        (Math.random() - 0.5) * 5
-      );
-      diceBody.torque = torque;
+      // Clear existing dice
+      activeDice.forEach(dice => {
+        DiceFactory.removeDice(dice, world, scene);
+      });
+      activeDice = [];
+
+      // Create new dice
+      selectedDice.forEach((diceType, index) => {
+        const dice = DiceFactory.createDice(diceType, world, scene);
+        
+        // Position dice in a spread pattern
+        const angle = (index / selectedDice.length) * Math.PI * 2;
+        const radius = Math.min(2, selectedDice.length * 0.5);
+        const x = Math.cos(angle) * radius;
+        const z = Math.sin(angle) * radius;
+        
+        dice.body.position.set(x, 5 + Math.random() * 2, z);
+        
+        // Apply random impulse
+        const force = new CANNON.Vec3(
+          (Math.random() - 0.5) * 8,
+          2 + Math.random() * 3,
+          (Math.random() - 0.5) * 8
+        );
+        dice.body.applyImpulse(force, dice.body.position);
+        
+        // Apply random torque
+        const torque = new CANNON.Vec3(
+          (Math.random() - 0.5) * 10,
+          (Math.random() - 0.5) * 10,
+          (Math.random() - 0.5) * 10
+        );
+        dice.body.torque = torque;
+
+        activeDice.push(dice);
+      });
 
       // Check for dice rest after a delay
       setTimeout(() => {
         const checkRest = () => {
-          if (diceBody.velocity.length() < 0.1 && diceBody.angularVelocity.length() < 0.1) {
+          const allAtRest = activeDice.every(dice => 
+            dice.body.velocity.length() < 0.1 && dice.body.angularVelocity.length() < 0.1
+          );
+
+          if (allAtRest) {
             setIsRolling(false);
-            // Simple face detection - check which face is up
-            const result = getDiceFace(diceBody.quaternion);
-            setDiceResult(result);
+            // Calculate results
+            const results: DiceRoll[] = activeDice.map(dice => ({
+              type: dice.type,
+              result: DiceFactory.getDiceFaceValue(dice.type, dice.body.quaternion)
+            }));
+            setRollResults(results);
           } else {
             setTimeout(checkRest, 100);
           }
         };
         checkRest();
-      }, 1000);
-    };
-
-    // Simple dice face detection based on orientation
-    const getDiceFace = (quaternion: CANNON.Quaternion) => {
-      const tempVec = new CANNON.Vec3(0, 1, 0);
-      quaternion.vmult(tempVec, tempVec);
-      
-      // Check which axis is most aligned with up (Y)
-      const faces = [
-        { normal: new CANNON.Vec3(0, 1, 0), value: 1 },   // top
-        { normal: new CANNON.Vec3(0, -1, 0), value: 6 },  // bottom  
-        { normal: new CANNON.Vec3(1, 0, 0), value: 2 },   // right
-        { normal: new CANNON.Vec3(-1, 0, 0), value: 5 },  // left
-        { normal: new CANNON.Vec3(0, 0, 1), value: 3 },   // front
-        { normal: new CANNON.Vec3(0, 0, -1), value: 4 },  // back
-      ];
-
-      let maxDot = -1;
-      let result = 1;
-      
-      faces.forEach(face => {
-        const dot = tempVec.dot(face.normal);
-        if (dot > maxDot) {
-          maxDot = dot;
-          result = face.value;
-        }
-      });
-
-      return result;
+      }, 1500);
     };
 
     // Animation loop
@@ -150,9 +140,11 @@ const App: React.FC = () => {
       // Step physics
       world.step(1/60);
       
-      // Update visual dice position and rotation from physics
-      diceMesh.position.copy(diceBody.position as any);
-      diceMesh.quaternion.copy(diceBody.quaternion as any);
+      // Update visual dice positions and rotations from physics
+      activeDice.forEach(dice => {
+        dice.mesh.position.copy(dice.body.position as any);
+        dice.mesh.quaternion.copy(dice.body.quaternion as any);
+      });
       
       renderer.render(scene, camera);
     };
@@ -169,8 +161,12 @@ const App: React.FC = () => {
     window.addEventListener('resize', handleResize);
 
     // Click handler for rolling
-    const handleClick = () => {
-      if (!isRolling) {
+    const handleClick = (event: MouseEvent) => {
+      // Don't roll if clicking on UI elements
+      const target = event.target as HTMLElement;
+      if (target.closest('[data-ui]')) return;
+      
+      if (!isRolling && selectedDice.length > 0) {
         rollDice();
       }
     };
@@ -181,28 +177,108 @@ const App: React.FC = () => {
     return () => {
       window.removeEventListener('resize', handleResize);
       renderer.domElement.removeEventListener('click', handleClick);
+      
+      // Clean up dice
+      activeDice.forEach(dice => {
+        DiceFactory.removeDice(dice, world, scene);
+      });
+      
       if (mountRef.current && renderer.domElement) {
         mountRef.current.removeChild(renderer.domElement);
       }
       renderer.dispose();
     };
-  }, []);
+  }, [selectedDice, isRolling]);
 
   return (
     <div>
       <div ref={mountRef} style={{ width: '100vw', height: '100vh' }} />
-      <div style={{ 
-        position: 'absolute', 
-        top: 20, 
-        left: 20, 
+      
+      <div data-ui>
+        <DiceSelector
+          selectedDice={selectedDice}
+          onDiceChange={setSelectedDice}
+          isRolling={isRolling}
+        />
+      </div>
+
+      <div data-ui>
+        <RollResults
+          results={rollResults}
+          modifier={modifier}
+          isRolling={isRolling}
+        />
+      </div>
+
+      {/* Modifier Controls */}
+      <div data-ui style={{
+        position: 'absolute',
+        top: 20,
+        right: 20,
+        background: 'rgba(0, 0, 0, 0.8)',
+        padding: '15px',
+        borderRadius: '10px',
         color: 'white',
-        fontSize: '18px',
         fontFamily: 'Arial, sans-serif'
       }}>
-        <h2>3D Dice Roller with Physics!</h2>
-        <p>Click anywhere to roll the dice</p>
-        {isRolling && <p>🎲 Rolling...</p>}
-        {diceResult && !isRolling && <p>🎯 Result: {diceResult}</p>}
+        <div style={{ marginBottom: '10px' }}>
+          <strong>Modifier:</strong>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <button
+            onClick={() => setModifier(Math.max(-20, modifier - 1))}
+            disabled={isRolling}
+            style={{
+              background: isRolling ? '#666' : '#f44336',
+              color: 'white',
+              border: 'none',
+              padding: '5px 10px',
+              borderRadius: '3px',
+              cursor: isRolling ? 'not-allowed' : 'pointer'
+            }}
+          >
+            -1
+          </button>
+          <span style={{ 
+            minWidth: '40px', 
+            textAlign: 'center',
+            fontSize: '16px',
+            fontWeight: 'bold'
+          }}>
+            {modifier > 0 ? '+' : ''}{modifier}
+          </span>
+          <button
+            onClick={() => setModifier(Math.min(20, modifier + 1))}
+            disabled={isRolling}
+            style={{
+              background: isRolling ? '#666' : '#4CAF50',
+              color: 'white',
+              border: 'none',
+              padding: '5px 10px',
+              borderRadius: '3px',
+              cursor: isRolling ? 'not-allowed' : 'pointer'
+            }}
+          >
+            +1
+          </button>
+        </div>
+        <button
+          onClick={() => setModifier(0)}
+          disabled={isRolling || modifier === 0}
+          style={{
+            background: isRolling || modifier === 0 ? '#666' : '#FF9800',
+            color: 'white',
+            border: 'none',
+            padding: '5px 10px',
+            borderRadius: '3px',
+            cursor: isRolling || modifier === 0 ? 'not-allowed' : 'pointer',
+            marginTop: '8px',
+            width: '100%',
+            fontSize: '12px'
+          }}
+        >
+          Reset
+        </button>
       </div>
     </div>
   );

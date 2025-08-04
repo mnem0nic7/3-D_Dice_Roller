@@ -35,9 +35,13 @@ A cross-platform 3D dice roller with realistic physics, customizable dice, and r
    - ✅ Start Express server with WebSocket endpoint
    - 🔄 Verify Socket.IO connection from client
    - 🔄 Test roll message broadcasting
-4. Dice physics
-   - Integrate cannon-es, create rolling logic for a die
-   - Implement face-detection on physics sleep
+4. ✅ Multiple Dice Types - COMPLETED
+   - ✅ Add support for d4, d6, d8, d10, d12, d20, d100
+   - ✅ Create dice factory with different geometries and colors
+   - ✅ Implement dice selection UI with visual indicators
+   - ✅ Support rolling multiple dice simultaneously
+   - ✅ Add modifier system (+/- to rolls)
+   - ✅ Display detailed roll results with totals
 5. Multiplayer sync
    - Define roll message protocol in shared types
    - Broadcast roll events and mirror outcomes across clients
