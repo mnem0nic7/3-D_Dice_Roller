@@ -1,0 +1,321 @@
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
+import { DiceType, DiceRoll } from '../../shared/src/types';
+import { DiceSelector } from './components/DiceSelector';
+import { RollResults } from './components/RollResults';
+import { DiceFactory, DiceGeometry } from './utils/DiceFactory';
+
+const App: React.FC = () => {
+  const mountRef = useRef<HTMLDivElement>(null);
+  const activeDiceRef = useRef<DiceGeometry[]>([]);
+  const worldRef = useRef<CANNON.World | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  
+  const [selectedDice, setSelectedDice] = useState<DiceType[]>(['d6']);
+  const [isRolling, setIsRolling] = useState(false);
+  const [rollResults, setRollResults] = useState<DiceRoll[]>([]);
+  const [modifier, setModifier] = useState(0);
+
+  // Create rollDice function with useCallback to maintain reference
+  const rollDice = useCallback(() => {
+    console.log('rollDice function called');
+    
+    if (selectedDice.length === 0) {
+      console.log('No dice selected, returning');
+      return;
+    }
+    
+    if (isRolling) {
+      console.log('Already rolling, returning');
+      return;
+    }
+
+    setIsRolling(true);
+    console.log('Starting roll with dice:', selectedDice);
+
+    // Clear previous dice
+    activeDiceRef.current.forEach(dice => {
+      sceneRef.current?.remove(dice.mesh);
+      worldRef.current?.removeBody(dice.body);
+    });
+    activeDiceRef.current = [];
+
+    // Create new dice
+    const newDice: DiceGeometry[] = [];
+    const spacing = 1.5; // Distance between dice
+    
+    selectedDice.forEach((diceType, index) => {
+      const dice = DiceFactory.createDice(diceType);
+      
+      // Position dice in a row
+      const x = (index - (selectedDice.length - 1) / 2) * spacing;
+      dice.body.position.set(x, 3, 0);
+      
+      // Add some random rotation and gentler force
+      const rotX = (Math.random() - 0.5) * 0.3;
+      const rotY = (Math.random() - 0.5) * 0.3;
+      const rotZ = (Math.random() - 0.5) * 0.3;
+      dice.body.angularVelocity.set(rotX, rotY, rotZ);
+      
+      // Add gentler downward force
+      const forceX = (Math.random() - 0.5) * 0.5;
+      const forceY = -0.2;
+      const forceZ = (Math.random() - 0.5) * 0.5;
+      dice.body.applyImpulse(new CANNON.Vec3(forceX, forceY, forceZ));
+      
+      sceneRef.current?.add(dice.mesh);
+      worldRef.current?.addBody(dice.body);
+      newDice.push(dice);
+    });
+
+    activeDiceRef.current = newDice;
+
+    // Wait for dice to settle and calculate results
+    setTimeout(() => {
+      const results: DiceRoll[] = selectedDice.map((diceType, index) => {
+        let value: number;
+        switch (diceType) {
+          case 'd4': value = Math.floor(Math.random() * 4) + 1; break;
+          case 'd6': value = Math.floor(Math.random() * 6) + 1; break;
+          case 'd8': value = Math.floor(Math.random() * 8) + 1; break;
+          case 'd10': value = Math.floor(Math.random() * 10) + 1; break;
+          case 'd12': value = Math.floor(Math.random() * 12) + 1; break;
+          case 'd20': value = Math.floor(Math.random() * 20) + 1; break;
+          case 'd100': value = Math.floor(Math.random() * 100) + 1; break;
+          default: value = 1;
+        }
+        
+        return {
+          id: `${diceType}-${index}`,
+          type: diceType,
+          value
+        };
+      });
+      
+      setRollResults(results);
+      setIsRolling(false);
+      console.log('Roll completed with results:', results);
+    }, 3000);
+  }, [selectedDice, isRolling]);
+
+  useEffect(() => {
+    if (!mountRef.current) return;
+
+    // Scene setup
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x2a2a2a);
+    sceneRef.current = scene;
+
+    // Camera
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 8, 8);
+    camera.lookAt(0, 0, 0);
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    mountRef.current.appendChild(renderer.domElement);
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0x404040, 0.4);
+    scene.add(ambientLight);
+
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(10, 10, 5);
+    directionalLight.castShadow = true;
+    directionalLight.shadow.mapSize.width = 2048;
+    directionalLight.shadow.mapSize.height = 2048;
+    scene.add(directionalLight);
+
+    // Physics world
+    const world = new CANNON.World();
+    world.gravity.set(0, -9.82, 0);
+    world.broadphase = new CANNON.NaiveBroadphase();
+    worldRef.current = world;
+
+    // Ground plane
+    const groundGeometry = new THREE.PlaneGeometry(20, 20);
+    const groundMaterial = new THREE.MeshLambertMaterial({ color: 0x8FBC8F });
+    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Physics ground
+    const groundShape = new CANNON.Plane();
+    const groundBody = new CANNON.Body({ mass: 0, material: new CANNON.Material({ friction: 0.3, restitution: 0.3 }) });
+    groundBody.addShape(groundShape);
+    groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(-1, 0, 0), Math.PI / 2);
+    world.addBody(groundBody);
+
+    // Add invisible walls to contain dice
+    const wallMaterial = new CANNON.Material({ friction: 0.3, restitution: 0.5 });
+    
+    // Front wall
+    const frontWallShape = new CANNON.Plane();
+    const frontWallBody = new CANNON.Body({ mass: 0, material: wallMaterial });
+    frontWallBody.addShape(frontWallShape);
+    frontWallBody.position.set(0, 0, -10);
+    world.addBody(frontWallBody);
+    
+    // Back wall
+    const backWallShape = new CANNON.Plane();
+    const backWallBody = new CANNON.Body({ mass: 0, material: wallMaterial });
+    backWallBody.addShape(backWallShape);
+    backWallBody.position.set(0, 0, 10);
+    backWallBody.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), Math.PI);
+    world.addBody(backWallBody);
+    
+    // Left wall
+    const leftWallShape = new CANNON.Plane();
+    const leftWallBody = new CANNON.Body({ mass: 0, material: wallMaterial });
+    leftWallBody.addShape(leftWallShape);
+    leftWallBody.position.set(-10, 0, 0);
+    leftWallBody.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), Math.PI / 2);
+    world.addBody(leftWallBody);
+    
+    // Right wall
+    const rightWallShape = new CANNON.Plane();
+    const rightWallBody = new CANNON.Body({ mass: 0, material: wallMaterial });
+    rightWallBody.addShape(rightWallShape);
+    rightWallBody.position.set(10, 0, 0);
+    rightWallBody.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), -Math.PI / 2);
+    world.addBody(rightWallBody);
+
+    // Add visual boundaries (optional - you can remove this if you don't want to see the walls)
+    const createWallGeometry = () => {
+      const geometry = new THREE.PlaneGeometry(20, 10);
+      const material = new THREE.MeshBasicMaterial({ 
+        color: 0x444444, 
+        transparent: true, 
+        opacity: 0.1,
+        side: THREE.DoubleSide 
+      });
+      return new THREE.Mesh(geometry, material);
+    };
+
+    const frontWallMesh = createWallGeometry();
+    frontWallMesh.position.set(0, 5, -10);
+    scene.add(frontWallMesh);
+
+    const backWallMesh = createWallGeometry();
+    backWallMesh.position.set(0, 5, 10);
+    scene.add(backWallMesh);
+
+    const leftWallMesh = createWallGeometry();
+    leftWallMesh.position.set(-10, 5, 0);
+    leftWallMesh.rotation.y = Math.PI / 2;
+    scene.add(leftWallMesh);
+
+    const rightWallMesh = createWallGeometry();
+    rightWallMesh.position.set(10, 5, 0);
+    rightWallMesh.rotation.y = -Math.PI / 2;
+    scene.add(rightWallMesh);
+
+    // Mouse click handler
+    const handleClick = (event: MouseEvent) => {
+      console.log('Mouse click detected');
+      rollDice();
+    };
+
+    renderer.domElement.addEventListener('click', handleClick);
+
+    // Animation loop
+    const animate = () => {
+      requestAnimationFrame(animate);
+      
+      // Step physics
+      world.step(1/60);
+      
+      // Update visual dice positions and rotations from physics
+      activeDiceRef.current.forEach(dice => {
+        dice.mesh.position.copy(dice.body.position as any);
+        dice.mesh.quaternion.copy(dice.body.quaternion as any);
+        
+        // Safety check: reset dice that fall too far or go out of bounds
+        const pos = dice.body.position;
+        if (pos.y < -5 || Math.abs(pos.x) > 12 || Math.abs(pos.z) > 12) {
+          dice.body.position.set(0, 3, 0);
+          dice.body.velocity.set(0, 0, 0);
+          dice.body.angularVelocity.set(0, 0, 0);
+        }
+      });
+      
+      renderer.render(scene, camera);
+    };
+    
+    animate();
+
+    // Handle window resize
+    const handleResize = () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    };
+
+    window.addEventListener('resize', handleResize);
+
+    // Cleanup
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      renderer.domElement.removeEventListener('click', handleClick);
+      if (mountRef.current) {
+        mountRef.current.removeChild(renderer.domElement);
+      }
+      renderer.dispose();
+    };
+  }, [rollDice]);
+
+  const total = rollResults.reduce((sum, result) => sum + result.value, 0) + modifier;
+
+  return (
+    <div className="app">
+      <div ref={mountRef} className="scene-container" />
+      
+      <div className="ui-overlay">
+        <div className="dice-controls">
+          <h2>3D Dice Roller</h2>
+          
+          <DiceSelector 
+            selectedDice={selectedDice}
+            onDiceChange={setSelectedDice}
+          />
+          
+          <div className="modifier-control">
+            <label htmlFor="modifier">Modifier:</label>
+            <input
+              id="modifier"
+              type="number"
+              value={modifier}
+              onChange={(e) => setModifier(Number(e.target.value))}
+              className="modifier-input"
+            />
+          </div>
+          
+          <button 
+            onClick={rollDice}
+            disabled={isRolling || selectedDice.length === 0}
+            className="roll-button"
+          >
+            {isRolling ? 'Rolling...' : 'Roll Dice'}
+          </button>
+          
+          <p className="click-hint">💡 Click anywhere on the scene to roll dice!</p>
+        </div>
+        
+        {rollResults.length > 0 && (
+          <RollResults 
+            results={rollResults}
+            modifier={modifier}
+            total={total}
+          />
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default App;

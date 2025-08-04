@@ -11,50 +11,51 @@ export interface DiceGeometry {
 
 export class DiceFactory {
   private static createDiceGeometry(type: DiceType): { geometry: THREE.BufferGeometry; shape: CANNON.Shape } {
+    const scale = 1.5; // Make dice larger
     switch (type) {
       case 'd4':
         return {
-          geometry: new THREE.TetrahedronGeometry(1),
-          shape: new CANNON.Box(new CANNON.Vec3(0.8, 0.8, 0.8)) // Approximate with box for simplicity
+          geometry: new THREE.TetrahedronGeometry(scale),
+          shape: new CANNON.Box(new CANNON.Vec3(scale * 0.8, scale * 0.8, scale * 0.8)) // Approximate with box for simplicity
         };
       
       case 'd6':
         return {
-          geometry: new THREE.BoxGeometry(1, 1, 1),
-          shape: new CANNON.Box(new CANNON.Vec3(0.5, 0.5, 0.5))
+          geometry: new THREE.BoxGeometry(scale, scale, scale),
+          shape: new CANNON.Box(new CANNON.Vec3(scale * 0.5, scale * 0.5, scale * 0.5))
         };
       
       case 'd8':
         return {
-          geometry: new THREE.OctahedronGeometry(1),
-          shape: new CANNON.Box(new CANNON.Vec3(0.7, 0.7, 0.7)) // Approximate with box
+          geometry: new THREE.OctahedronGeometry(scale),
+          shape: new CANNON.Box(new CANNON.Vec3(scale * 0.7, scale * 0.7, scale * 0.7)) // Approximate with box
         };
       
       case 'd10':
         // Create a pentagonal trapezohedron approximation
-        const d10Geometry = new THREE.ConeGeometry(0.8, 1.6, 10);
+        const d10Geometry = new THREE.ConeGeometry(scale * 0.8, scale * 1.6, 10);
         return {
           geometry: d10Geometry,
-          shape: new CANNON.Cylinder(0.8, 0.8, 1.6, 8)
+          shape: new CANNON.Cylinder(scale * 0.8, scale * 0.8, scale * 1.6, 8)
         };
       
       case 'd12':
         return {
-          geometry: new THREE.DodecahedronGeometry(1),
-          shape: new CANNON.Box(new CANNON.Vec3(0.9, 0.9, 0.9)) // Approximate with box
+          geometry: new THREE.DodecahedronGeometry(scale),
+          shape: new CANNON.Box(new CANNON.Vec3(scale * 0.9, scale * 0.9, scale * 0.9)) // Approximate with box
         };
       
       case 'd20':
         return {
-          geometry: new THREE.IcosahedronGeometry(1),
-          shape: new CANNON.Box(new CANNON.Vec3(0.8, 0.8, 0.8)) // Approximate with box
+          geometry: new THREE.IcosahedronGeometry(scale),
+          shape: new CANNON.Box(new CANNON.Vec3(scale * 0.8, scale * 0.8, scale * 0.8)) // Approximate with box
         };
       
       case 'd100':
         // Use a larger icosahedron for d100
         return {
-          geometry: new THREE.IcosahedronGeometry(1.2),
-          shape: new CANNON.Box(new CANNON.Vec3(1, 1, 1))
+          geometry: new THREE.IcosahedronGeometry(scale * 1.2),
+          shape: new CANNON.Box(new CANNON.Vec3(scale, scale, scale))
         };
       
       default:
